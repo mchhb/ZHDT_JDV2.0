@@ -13,15 +13,15 @@
 #include <string.h>
 #include "iwdg.h"
 #include "dhcp.h"
-#include "usart1.h"
-#include "usart3.h"
 #include "ADXL345.h"
 #include "24c16.h"
-#include "adc.h"
 #include "exti.h"
 #include "MqttKit.h"
 #include "tcp_demo.h"
 #include "socket.h"
+#include "BD_TG.h"
+#include "input.h"
+
 //#include "MQTTConnectClient.h"
 extern __IO uint16_t ADC_ConvertedValue;// ADC1转换的电压值通过MDA方式传到SRAM
 extern __IO uint16_t ADC_Result[1];
@@ -52,7 +52,7 @@ uint32_t 	timeSUB = 0;
 uint8_t 	timePING = 0;
 uint8_t 	temp_rh[2];
 uint8_t   uart2_send_read = 0;
-
+int floor = 1;
 uint8_t   uart2_send_write = 0;
 uint16_t 	noise;
 uint8_t 	noise_status = 0;
@@ -79,7 +79,7 @@ uint16 overtime=0;
 uint8_t overtime_reset = 0;
 uint8_t  test_while = 0;
 uint8_t  work_status;
-uint8_t  network_status;
+uint8_t  network_status = 1;
 uint8_t  led_set_work;
 uint8_t  led_set_network;
 #define WORK_NORMAL				0
@@ -102,6 +102,21 @@ uint8_t external_led2 = 0;
 uint8_t external_led3 = 0;
 uint8_t external_led4 = 0;
 uint8_t external_led_open = 0;
+uint8_t input1_printf = 0; 
+uint8_t input2_printf = 0; 
+uint8_t input3_printf = 0; 
+uint8_t input4_printf = 0; 
+uint8_t input5_printf = 0; 
+uint8_t input6_printf = 0; 
+uint8_t input2_up = 0;
+uint8_t input1_up = 0;
+uint8_t door_not_close = 0;
+uint8_t door_not_close_printf = 0;
+uint8_t pingceng = 0;
+uint8_t driver_start = 0;
+uint8_t driver_status = 0;
+uint8_t driver1_status = 0;
+uint8_t driver2_status = 0;
 int rc=0;	
 int test_time = 0;
 int test_time1 = 0;
@@ -111,6 +126,8 @@ uint8_t power_time = 0;
 uint8_t battery_time = 0;
 uint8 txBuffer[40];
 uint8_t domain_name[]="www.embed-net.com";
+uint8_t w5500_connect_success = 0;
+uint8_t W5500_REBOOT = 0;
 
 void Initialization_configuration(void) {
 
@@ -126,25 +143,27 @@ void Initialization_configuration(void) {
 
 	TIM3_NVIC_Configuration();
 	
+	TIM4_Configuration();
+
+	TIM4_NVIC_Configuration();
+	
 	GPIO_Configuration();
 	
-	Power_check();
+	input_gpio();
+	
+	USART2_NVIC_Configuration();
 
 	WIZ_SPI_Init();
 	
 	at24c16_init();
 
 	ADXL345_init();
-	
-	ADC1_Init();
-	
+		
 	EXTI_ENABLE();
 	
-	USART2_Config();		
+	USART2_Config();	
 
-	USART1_Config();	
-	
-	USART3_Config();	
+	Power_check();
 
 	GetLockCode();
 	
@@ -160,13 +179,9 @@ void Initialization_configuration(void) {
 
   printf("W5500 Init Complete!\r\n");
 	
-	USART1_NVIC_Configuration();
-	
-	USART3_NVIC_Configuration();
-	
-	USART2_NVIC_Configuration();
-	
 	START_TIME2;
+	
+	START_TIME4;
 }
 void application(void)
 {
@@ -194,51 +209,6 @@ void application(void)
 	if(t2_count_ms[T2_COUNTER_MS_2500] >= T2_TIMEOUT_MS_2500)  //2.5s
 	{
 		t2_count_ms[T2_COUNTER_MS_2500] = 0;	 
-		if(external_driver == 0)
-		{
-			for(int k = 0; k < 20; k++)
-			{
-				USART_SendDatacmd(USART1,result[k]);
-			}
-			external_led1 = 1;
-			external_driver = 1;
-			if(rxd_buffer_locked1 == 1)
-			{
-				rxd_buffer_locked1 = 0;
-				external_led2 = 1; 
-				external_temp1 = usart_buf1[14];
-				external_humi1 = usart_buf1[15];
-				external_vibr1 = usart_buf1[16];
-				external_noise1 = usart_buf1[17];
-			}
-			for(int k = 0; k < 20; k++)
-			{
-				USART_SendDatacmd(USART1,0x11);
-				delay_us(100);
-			}
-		}
-		else
-		{
-			for(int m = 0; m < 20; m++)
-			{
-				USART_SendDatacmd(USART3,result[m]);
-			}
-			external_driver = 0;
-			external_led3 = 1;
-			if(rxd_buffer_locked3 == 1)
-			{
-				rxd_buffer_locked3 = 0;
-				external_led4 = 1;
-				external_temp3 = usart_buf3[14];
-				external_humi3 = usart_buf3[15];
-				external_vibr3 = usart_buf3[16];
-				external_noise3 = usart_buf3[17];
-			for(int k = 0; k < 20; k++)
-			{
-				USART_SendDatacmd(USART1,0x11);
-			}
-			}
-		}
 	}
 	if(t2_count_ms[T2_COUNTER_MS_10000] >= T2_TIMEOUT_MS_10000)  //10s
 	{
@@ -255,6 +225,7 @@ void application(void)
 			flag =1;	
 			printf("收到心跳\r\n");
 			network_status = 0;
+			driver_start = 1; 
 		}	
 		else 
 		{
@@ -267,6 +238,7 @@ void application(void)
 				printf("心跳超时，重新连接！\r\n");
 				overtime=0;
 				disconnet=1;
+				driver_start = 0;
 				send(SOCK_TCPC,Disconnect_Request,2);//发送断网
 				flag=0;					
 				memset(buff,0,sizeof(buff));
@@ -274,6 +246,7 @@ void application(void)
 			}
 		}			
 	}
+		
 //	if(t2_count_ms[T2_COUNTER_MS_180000] >= T2_TIMEOUT_MS_180000)  //180s
 //	{
 //		t2_count_ms[T2_COUNTER_MS_180000] = 0;
@@ -327,7 +300,6 @@ void application(void)
 	if(t2_count_ms[T2_COUNTER_MS_2000] >= T2_TIMEOUT_MS_2000)  //2s
 	{
 		t2_count_ms[T2_COUNTER_MS_2000] = 0;
-		external_led_open++;
 
 		DHT11_GetValue(temp_rh);
 		temperature = temp_rh[1];
@@ -343,28 +315,6 @@ void application(void)
 			//printf("humidity     is %f\r\n",humidity);	
 			work_dht11_status = 0;
 		}		
-		noise = ADC_Result[0];
-		if(noise == 0)
-		{
-			noise_status++;
-			if(noise_status > 5)
-			{
-				printf("The noise	is bad !\r\n");
-				work_noise_status = 1;
-			}
-		}
-		else if(noise > 50)
-		{
-			//printf(" It's too noisy \r\n");
-			printf("noise		     is %d\r\n",noise);
-			work_noise_status = 1;
-		}
-		else
-		{
-			//printf("noise		     is %d\r\n",noise);
-			work_noise_status = 0;
-			noise_status = 0;
-		}
 	}
 	if(t2_count_ms[T2_COUNTER_MS_200] >= T2_TIMEOUT_MS_200)  //0.2s
 	{
@@ -416,7 +366,7 @@ void application(void)
 	}
 	if((battery_status == 1)&&(battery_time != 0))
 	{
-		if(t2_count_ms[T2_COUNTER_MS_250] >= T2_TIMEOUT_MS_250)  //300ms
+		if(t2_count_ms[T2_COUNTER_MS_250] >= T2_TIMEOUT_MS_250)  //250ms
 		{
 			t2_count_ms[T2_COUNTER_MS_250] = 0;
 			if(battery_status == 1)
@@ -428,7 +378,7 @@ void application(void)
 	}
 	if((battery_status == 0)&&(battery_time == 0))
 	{
-		if(t2_count_ms[T2_COUNTER_MS_250] >= T2_TIMEOUT_MS_250)  //300ms
+		if(t2_count_ms[T2_COUNTER_MS_250] >= T2_TIMEOUT_MS_250)  //250ms
 		{
 			t2_count_ms[T2_COUNTER_MS_250] = 0;
 			if(battery_status == 0)
@@ -445,14 +395,14 @@ void application(void)
 		AccelerationX = adxl_val[0];
 		AccelerationY = adxl_val[1];
 		AccelerationZ = adxl_val[2];
-		printf("x = %f,y = %f,z = %f\r\n",AccelerationX,AccelerationY,AccelerationZ);
-		if((AccelerationX == 0)||(AccelerationY == 0)||(AccelerationZ == 0))
+		//printf("x = %f,y = %f,z = %f\r\n",AccelerationX,AccelerationY,AccelerationZ);
+		if((AccelerationX == 0)&&(AccelerationY == 0)&&(AccelerationZ == 0))
 		{
 			work_ACCadd++;
 			if(work_ACCadd > 5)
 			{
 				work_Acceleration_status = 1;
-				printf(" Acceleration is demaged ! \r\n");
+				printf("Acceleration is demaged ! \r\n");
 			}
 		}
 		else
@@ -465,45 +415,212 @@ void application(void)
 	{
 		SoftReset();		
 	}
-	
-	if((external_led_open%2 == 0) &&((external_led1 == 1)))
+	if((publish_buf[0] == 0x10)&&(publish_buf[1] == 0x10))
 	{
-			UART1_LED_SUCCESS_ON;
-			UART1_LED_FAIL_OFF;
-			external_led1 = 0;
+		at24c16_write(EE_ADDR_REBOOT, 0x01);
+		delay_ms(1000);
+		SoftReset();
 	}
-	else if((external_led_open%2 == 0) &&((external_led2 == 1)))
+	if(driver_start == 1)
 	{
-			UART1_LED_SUCCESS_OFF;
-			UART1_LED_FAIL_ON;
-			external_led2 = 0;
-	}
-	else
-	{
-			UART1_LED_SUCCESS_OFF;
-			UART1_LED_FAIL_OFF;
-	}
-	if((external_led_open%2 == 0) &&((external_led3 == 1)))
-	{
-			UART3_LED_SUCCESS_ON;
-			UART3_LED_FAIL_OFF;
-			external_led3 = 0;
-	}
-	else if((external_led_open%2 == 0) &&((external_led4 == 1)))
-	{
-			UART3_LED_SUCCESS_OFF;
-			UART3_LED_FAIL_ON;
-			external_led4 = 0;
-	}
-	else
-	{
-			UART3_LED_SUCCESS_OFF;
-			UART3_LED_FAIL_OFF;
+				input1_status();
+				input2_status();
+				if((input1_value == 1) && (input2_value == 1))
+				{
+					UART1_LED_SUCCESS_ON;
+					UART1_LED_FAIL_OFF;		
+				}
+				else
+				{
+					UART1_LED_SUCCESS_OFF;
+					UART1_LED_FAIL_OFF;			
+				}
+			if((driver1_status == 1)||(driver2_status == 1)||(driver_status == 0))
+			{
+				if((input1_value == 1) && (input2_value == 0))
+				{
+					printf("现在的楼梯是上行 ！\r\n");
+					driver1_status = 3;
+					driver2_status = 0;
+					driver_status = 1;
+					input1_up = 0;
+					input2_up = 0;
+				}
+				else if((input1_value == 0) &&(input2_value ==1))
+				{
+					printf("现在的楼梯是下行 ！\r\n");
+					driver1_status = 0;
+					driver2_status = 3;
+					driver_status = 1;
+					input1_up = 0;
+					input2_up = 0;
+				}
+			}
+			else
+			{
+				input1_status();
+				if(input1_value == 1)
+				{
+					if(driver2_status ==3)
+					{
+						input2_up = 4;
+						driver2_status = 0;
+					}
+					else if((input2_up != 5)&&(driver1_status != 3))
+					{
+						input1_up = 4;
+					}
+					else if(input2_up == 5)
+					{
+							if(input1_printf == 0)
+							{
+								++floor;
+								if(floor == 0)
+								{
+									++floor;
+								}
+								printf("电梯已经就位 ！\r\n");
+								printf("现在的楼层是  %d  层 ！\r\n",floor);
+//								UART1_LED_SUCCESS_ON;
+//								UART1_LED_FAIL_OFF;
+								input1_printf++;
+								input2_up = 0;
+								input1_up = 0;
+								driver1_status = 1;
+							}
+					}
+				}
+				else
+				{
+					input1_printf = 0;
+				}
+				input2_status();
+				if(input2_value == 1)
+				{
+					if(driver1_status ==3)
+					{
+						input2_up = 5;
+						driver1_status = 0;
+					}
+					else if((input1_up != 4)&&(driver2_status != 3))
+					{
+						input2_up = 5;
+					}
+					else if(input1_up == 4)
+					{
+							if(input2_printf == 0)
+							{
+								--floor;
+								if(floor == 0)
+								{
+									--floor;
+								}
+								printf("电梯已经就位 ！\r\n");
+								printf("现在的楼层是  %d  层\r\n",floor);
+//								UART1_LED_SUCCESS_ON;
+//								UART1_LED_FAIL_OFF;
+								input2_printf++;
+								input1_up = 0;
+								input2_up = 0;
+								driver2_status = 1;
+							}
+					}
+				}
+				else
+				{
+					input2_printf = 0;
+				}
+			}
+			input3_status();
+			if(input3_value == 1)
+			{
+				if(input3_printf == 0)
+				{
+					printf("门已关到位 \r\n");
+					input3_printf++;
+				}
+				door_not_close_printf = 0;
+				door_not_close = 0;
+				t2_count_ms[T2_COUNTER_MS_300000] = 0;
+				DOOR_CLOSE_ON;
+				DOOR_OPEN_OFF;
+			}
+			else
+			{
+				if(t2_count_ms[T2_COUNTER_MS_300000] >= T2_TIMEOUT_MS_300000)
+				{
+					if(door_not_close_printf == 0)
+					{
+						printf("门长时间未关，发送故障报文 ! \r\n");
+						door_not_close_printf++;
+					}
+					door_not_close = 1;
+				}
+				input3_printf = 0;
+				DOOR_CLOSE_OFF;
+				DOOR_OPEN_ON;
+			}
+			input4_status();
+			if(input4_value == 1)
+			{
+				if(input4_printf == 0)
+				{
+					floor = 1;
+					printf("现在的楼层是  %d  层\r\n",floor);
+					driver1_status = 0;
+					driver2_status = 0;
+					input1_up = 0;
+					input2_up = 0;
+					driver_status = 0;
+					input4_printf++;
+				}
+				UART3_LED_SUCCESS_ON;
+			}
+			else
+			{
+				input4_printf = 0;
+				UART3_LED_SUCCESS_OFF;
+			}
+			input5_status();
+			if(input5_value == 1)
+			{
+				if(input5_printf == 0)
+				{
+					printf("严重故障 ！\r\n");
+					printf("现在电梯已到顶部 ! \r\n");
+					input5_printf++;
+					TOP_YES;
+					BUTTON_NO;
+				}
+			}
+			else
+			{
+				TOP_NO;
+				input5_printf = 0;
+			}
+			input6_status();
+			if(input6_value == 1)
+			{
+				if(input6_printf == 0)
+				{
+					printf("严重故障 ！\r\n");
+					printf("现在电梯已到底部 ! \r\n");
+					input6_printf++;
+					TOP_NO;
+					BUTTON_YES;
+				}
+			}
+			else
+			{
+				BUTTON_NO;
+				input6_printf = 0;
+			}
 	}
 	if(rxd_buffer_locked == 1)
 	{
 		tim3i = 0;
 		tim3fquence=0;
+		driver_start = 0;
 		rxd_buffer_locked = 0;
 		if(usart_buf[1] == 0x01)
 		{
@@ -885,5 +1002,10 @@ void Power_check(void)
 		POWER_LED_SUCCESS_OFF;
 		POWER_LED_FAIL_ON;
 	}
+	if(at24c16_read(EE_ADDR_REBOOT) == 0x01)
+	{
+		  at24c16_write(EE_ADDR_REBOOT, 0x00);
+			W5500_REBOOT = 1;
+	}		
 }
 

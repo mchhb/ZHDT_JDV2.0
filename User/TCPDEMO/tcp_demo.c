@@ -42,6 +42,8 @@ extern unsigned char TxBuffer2[200];
 extern unsigned char RxBuffer2[200];
 extern unsigned char TxCounter2;
 extern unsigned char RxCounter2;
+extern uint8_t w5500_connect_success;
+extern uint8_t W5500_REBOOT;
 unsigned char ASII_hex=0;
 char test[300];
 /**
@@ -69,7 +71,8 @@ void do_tcp_client(void)
 			connect(SOCK_TCPC,BD_TG_server_ip,BD_TG_server_port);                /*socket连接服务器*/ 
 		break;
 
-		case SOCK_ESTABLISHED: /*socket处于连接建立状态*/			
+		case SOCK_ESTABLISHED: /*socket处于连接建立状态*/		
+			w5500_connect_success = 1;			
 			if(getSn_IR(SOCK_TCPC) & Sn_IR_CON)
 			{
 				setSn_IR(SOCK_TCPC, Sn_IR_CON); 							         /*清除接收中断标志位*/
@@ -88,7 +91,7 @@ void do_tcp_client(void)
 				/*MQTT协议连接BD_TG代理平台*/
 				case MQTT_PKT_CONNECT:
 					BD_TG_DevLink();
-					MQTT_STATE = MQTT_PKT_PINGREQ;
+					MQTT_STATE = MQTT_PKT_SUBSCRIBE;
 			   	
 				break;
 				/*订阅主题*/
@@ -102,11 +105,19 @@ void do_tcp_client(void)
 				  memset(test, 0, sizeof(test));
 				  
 #ifdef MQTT_STRING
+				if(W5500_REBOOT == 1)
+				{
+						sprintf(test,"REBOOT is success");
+						W5500_REBOOT = 0;
+				}
+				else
+				{
 				  sprintf(test, "temp = %f,humi = %f,noise = %d,AccelerationX = %f,AccelerationY = %f,    \
 				AccelerationZ = %f,temp1 = %d,humi1 = %d,vibr1 = %d,noise1 = %d,temp3 = %d,humi3 = %d,\
 				external_vibr3 = %d,noise3 = %d", \
 				temperature,humidity,noise,AccelerationX,AccelerationY,AccelerationZ,  \
 				external_temp1,external_humi1,external_vibr1,external_noise1,external_temp3,external_humi3,external_vibr3,external_noise3);
+				}
 #else
 				  for(int i=0; i<200;i++)
 					{
@@ -136,7 +147,7 @@ void do_tcp_client(void)
 					MQTT_STATE = MQTT_PKT_PINGREQ;
 				break;
 				case MQTT_PKT_PINGREQ:
-					network_status = 0;
+				//	network_status = 0;
 //					if(BD_TG_ping_time > 50)
 //					{
 //						send(SOCK_TCPC,BD_TG_ping_pak,2);
