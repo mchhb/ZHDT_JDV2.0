@@ -22,6 +22,7 @@
 #include "BD_TG.h"
 #include "input.h"
 
+
 //#include "MQTTConnectClient.h"
 extern __IO uint16_t ADC_ConvertedValue;// ADC1转换的电压值通过MDA方式传到SRAM
 extern __IO uint16_t ADC_Result[1];
@@ -32,16 +33,24 @@ extern uint8 buff[2048];
 extern unsigned char w5500_buf[128];   //之前是128
 extern volatile unsigned int  tim3fquence;	//定时中断次数
 extern int tim3i;
+unsigned char id_name[4];
 unsigned char result[20] = {0x66,0x04,0x10,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 														0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x99};
+//extern char *DEVID;
 void GetLockCode(void);
 void USART_SendDatacmd(USART_TypeDef* USARTx,unsigned char ch);
 void Power_check(void);
 //------------------------------
+u32 id_name_all;
 u32 Lock_Code;
 u32 CpuID[3];
 //------------------------------
 unsigned char  flag;
+uint8_t   power = 0;
+uint8_t   door_close_times;
+uint8_t   door_close_times_sum;
+uint8_t   door_close_times_sum1;
+uint8_t   door_close_times_sum2;
 uint8_t   ee_test = 0;
 uint8_t 	read_dht11 = 0;
 uint8_t 	send_data = 0;
@@ -53,6 +62,7 @@ uint8_t 	timePING = 0;
 uint8_t 	temp_rh[2];
 uint8_t   uart2_send_read = 0;
 int floor = 1;
+uint8_t door_open_over_time_sum = 0;
 uint8_t   uart2_send_write = 0;
 uint16_t 	noise;
 uint8_t 	noise_status = 0;
@@ -101,6 +111,7 @@ uint8_t external_led1 = 0;
 uint8_t external_led2 = 0;
 uint8_t external_led3 = 0;
 uint8_t external_led4 = 0;
+uint8_t publish_crc = 0;
 uint8_t external_led_open = 0;
 uint8_t input1_printf = 0; 
 uint8_t input2_printf = 0; 
@@ -117,6 +128,7 @@ uint8_t driver_start = 0;
 uint8_t driver_status = 0;
 uint8_t driver1_status = 0;
 uint8_t driver2_status = 0;
+uint8_t mqtt_send_time = 0;
 int rc=0;	
 int test_time = 0;
 int test_time1 = 0;
@@ -128,6 +140,8 @@ uint8 txBuffer[40];
 uint8_t domain_name[]="www.embed-net.com";
 uint8_t w5500_connect_success = 0;
 uint8_t W5500_REBOOT = 0;
+uint8_t door_open_times = 0;
+void read_config(void);
 
 void Initialization_configuration(void) {
 
@@ -174,6 +188,8 @@ void Initialization_configuration(void) {
 	set_w5500_mac();
 	
 	set_object_ip();
+	
+	read_config();
 
 	sysinit(txsize, rxsize); 													// 初始化8个socket
 
@@ -186,6 +202,7 @@ void Initialization_configuration(void) {
 void application(void)
 {
 	IWDG_Feed();
+	Power_check();
 	w5500_check();
 	auto_dhcp();
 	delay_ms(100);
@@ -250,9 +267,9 @@ void application(void)
 //	if(t2_count_ms[T2_COUNTER_MS_180000] >= T2_TIMEOUT_MS_180000)  //180s
 //	{
 //		t2_count_ms[T2_COUNTER_MS_180000] = 0;
-	if(t2_count_ms[T2_COUNTER_MS_30000] >= T2_TIMEOUT_MS_30000)  //30s
+	if(t2_count_ms[21] >= (mqtt_send_time*10000))  //30s
 	{
-		t2_count_ms[T2_COUNTER_MS_30000] = 0;
+		t2_count_ms[21] = 0;
 		test_time1++;
 		if((flag == 1)&&(overtime<1))//发布
 		{	   
@@ -395,7 +412,7 @@ void application(void)
 		AccelerationX = adxl_val[0];
 		AccelerationY = adxl_val[1];
 		AccelerationZ = adxl_val[2];
-		//printf("x = %f,y = %f,z = %f\r\n",AccelerationX,AccelerationY,AccelerationZ);
+	  printf("x = %f,y = %f,z = %f\r\n",AccelerationX,AccelerationY,AccelerationZ);
 		if((AccelerationX == 0)&&(AccelerationY == 0)&&(AccelerationZ == 0))
 		{
 			work_ACCadd++;
@@ -415,11 +432,33 @@ void application(void)
 	{
 		SoftReset();		
 	}
-	if((publish_buf[0] == 0x10)&&(publish_buf[1] == 0x10))
+	if((publish_buf[1] == 0x88)&&(publish_buf[3] == 0x99))
 	{
-		at24c16_write(EE_ADDR_REBOOT, 0x01);
-		delay_ms(1000);
-		SoftReset();
+//		publish_crc = (publish_buf[1]+publish_buf[3]+publish_buf[4]+publish_buf[5]+publish_buf[6]+publish_buf[7]+publish_buf[8]+publish_buf[9]);
+	//	if(publish_buf[10] == publish_crc)
+	//	{
+			if((publish_buf[4] == id_name[0])&&(publish_buf[5] == id_name[1])&&(publish_buf[6] == id_name[2])&&(publish_buf[7] == id_name[3]))
+			{
+					if(publish_buf[8] == 0x01)
+					{
+							printf("订阅收到重启指令!\r\n");
+							at24c16_write(EE_ADDR_REBOOT, 0x01);
+							delay_ms(1000);
+							SoftReset();
+					}
+					else if(publish_buf[8] == 0x02)
+					{
+							printf("订阅收到发布间隔指令!间隔变更为：%d秒 ！\r\n",mqtt_send_time);
+						  mqtt_send_time = publish_buf[9];
+						  at24c16_write(EE_ADDR_MQTT_SEND_TIME, mqtt_send_time);
+					}
+					memset(publish_buf, 0, sizeof(publish_buf));
+			}
+		//}
+	}
+	else
+	{
+		memset(publish_buf, 0, sizeof(publish_buf));
 	}
 	if(driver_start == 1)
 	{
@@ -445,6 +484,7 @@ void application(void)
 					driver_status = 1;
 					input1_up = 0;
 					input2_up = 0;
+					pingceng = 1;
 				}
 				else if((input1_value == 0) &&(input2_value ==1))
 				{
@@ -454,6 +494,7 @@ void application(void)
 					driver_status = 1;
 					input1_up = 0;
 					input2_up = 0;
+					pingceng = 1;
 				}
 			}
 			else
@@ -483,15 +524,18 @@ void application(void)
 								printf("现在的楼层是  %d  层 ！\r\n",floor);
 //								UART1_LED_SUCCESS_ON;
 //								UART1_LED_FAIL_OFF;
+								pingceng = 0;
 								input1_printf++;
 								input2_up = 0;
 								input1_up = 0;
 								driver1_status = 1;
 							}
 					}
+					
 				}
 				else
 				{
+					pingceng = 1;
 					input1_printf = 0;
 				}
 				input2_status();
@@ -515,6 +559,7 @@ void application(void)
 								{
 									--floor;
 								}
+								pingceng = 0;
 								printf("电梯已经就位 ！\r\n");
 								printf("现在的楼层是  %d  层\r\n",floor);
 //								UART1_LED_SUCCESS_ON;
@@ -528,6 +573,7 @@ void application(void)
 				}
 				else
 				{
+					pingceng = 1;
 					input2_printf = 0;
 				}
 			}
@@ -538,12 +584,33 @@ void application(void)
 				{
 					printf("门已关到位 \r\n");
 					input3_printf++;
+					door_close_times++;
+					if(door_close_times == 0xff)
+					{
+						door_close_times_sum++;
+						if(door_close_times_sum == 0xff)
+						{
+							door_close_times_sum = 0;
+							door_close_times_sum1++;
+							if(door_close_times_sum1 == 0xff)
+							{
+								door_close_times_sum1 = 0;
+								door_close_times_sum2++;
+								at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM2,door_close_times_sum2);
+							}
+							at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM1,door_close_times_sum1);
+						}
+						door_close_times = 0;
+						at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM,door_close_times_sum);
+					}
+					at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES,door_close_times);
 				}
 				door_not_close_printf = 0;
 				door_not_close = 0;
 				t2_count_ms[T2_COUNTER_MS_300000] = 0;
 				DOOR_CLOSE_ON;
 				DOOR_OPEN_OFF;
+				door_open_over_time_sum = 0;
 			}
 			else
 			{
@@ -551,11 +618,13 @@ void application(void)
 				{
 					if(door_not_close_printf == 0)
 					{
+						door_open_times = 1;
 						printf("门长时间未关，发送故障报文 ! \r\n");
-						door_not_close_printf++;
+						t2_count_ms[T2_COUNTER_MS_300000] = 0;
+						door_not_close_printf = 0;
 					}
-					door_not_close = 1;
 				}
+				door_not_close = 1;
 				input3_printf = 0;
 				DOOR_CLOSE_OFF;
 				DOOR_OPEN_ON;
@@ -683,10 +752,10 @@ void application(void)
 				txBuffer[0] = 0x24;
 				txBuffer[1] = 0x05;
 				txBuffer[2] = 0x06;	
-				txBuffer[3] = at24c16_read(EE_ADDR_GATEWAY_ONE);	
-				txBuffer[4] = at24c16_read(EE_ADDR_GATEWAY_TWO);	
-				txBuffer[5] = at24c16_read(EE_ADDR_GATEWAY_THREE);	
-				txBuffer[6] = at24c16_read(EE_ADDR_GATEWAY_FOUR);	
+				txBuffer[3] = at24c16_read(EE_ADDR_ID_NAME1);	
+				txBuffer[4] = at24c16_read(EE_ADDR_ID_NAME2);	
+				txBuffer[5] = at24c16_read(EE_ADDR_ID_NAME3);	
+				txBuffer[6] = at24c16_read(EE_ADDR_ID_NAME4);	
 				txBuffer[7] = 0x00;
 				txBuffer[8] = 0x00;				
 			}
@@ -763,6 +832,19 @@ void application(void)
 				delay_ms(1000);
 				delay_ms(1000);
 				SoftReset();				
+			}
+			if(usart_buf[3] == 0x13)	//门次数
+			{
+				uart2_send_read = 1;
+				txBuffer[0] = 0x24;
+				txBuffer[1] = 0x13;
+				txBuffer[2] = 0x06;	
+				txBuffer[3] = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM2);	
+				txBuffer[4] = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM1);	
+				txBuffer[5] = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM);	;	
+				txBuffer[6] = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES);	;	
+				txBuffer[7] = 0x00;	
+				txBuffer[8] = 0x00;				
 			}
 //			if(usart_buf[3] == 0x11)	//置PC标志位
 //			{
@@ -911,6 +993,22 @@ void application(void)
 				local_port = usart_buf[4]<<8|usart_buf[5];
 				uart_w5500_port_config = 1;
 			}
+			if(usart_buf[3] == 0x09)
+			{
+				uart2_send_write = 1;
+				at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES, usart_buf[4]);
+				at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM, usart_buf[5]);
+				at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM1, usart_buf[6]);
+				at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM2, usart_buf[7]);
+			}
+			if(usart_buf[3] == 0x10)
+			{
+				uart2_send_write = 1;
+				at24c16_write(EE_ADDR_ID_NAME1, usart_buf[4]);
+				at24c16_write(EE_ADDR_ID_NAME2, usart_buf[5]);
+				at24c16_write(EE_ADDR_ID_NAME3, usart_buf[6]);
+				at24c16_write(EE_ADDR_ID_NAME4, usart_buf[7]);
+			}
 //			if(( uart_w5500_ip_config == 1) && ( uart_w5500_mac_config == 1) && ( uart_w5500_subnet_config == 1) && \
 //				(uart_w5500_gateway_config == 1)	&&	(uart_w5500_dns_config == 1) && (uart_w5500_port_config))
 //			{
@@ -975,6 +1073,7 @@ void GetLockCode(void)
 	CpuID[2]=*(vu32*)(0x1ffff7f0);
 
 	Lock_Code=(CpuID[0]>>1)+(CpuID[1]>>2)+(CpuID[2]>>3);
+	//sprintf(DEVID,"%d",Lock_Code);
 	printf("唯一id：%d\r\n",Lock_Code);
 }
 
@@ -996,16 +1095,53 @@ void Power_check(void)
 	{
 		POWER_LED_SUCCESS_ON;
 		POWER_LED_FAIL_OFF;
+		power = 0;
 	}
 	else
 	{
 		POWER_LED_SUCCESS_OFF;
 		POWER_LED_FAIL_ON;
+		power = 1;
 	}
+}
+
+void read_config(void)
+{
 	if(at24c16_read(EE_ADDR_REBOOT) == 0x01)
 	{
 		  at24c16_write(EE_ADDR_REBOOT, 0x00);
 			W5500_REBOOT = 1;
-	}		
+	}	
+	if((at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES) == 0xFF) && (	at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM) == 0xFF)&& (	at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM1) == 0xFF) && ( at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM2) == 0xFF))
+	{
+		door_close_times = 0;
+		door_close_times_sum = 0;
+		door_close_times_sum1 = 0;
+		door_close_times_sum2 = 0;
+		at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES, 0x00);
+		at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM, 0x00);
+		at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM1, 0x00);
+		at24c16_write(EE_ADDR_DOOR_CLOSE_TIMES_SUM2, 0x00);
+	}
+	else
+	{
+		door_close_times = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES);
+		door_close_times_sum = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM);
+		door_close_times_sum1 = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM1);
+		door_close_times_sum2 = at24c16_read(EE_ADDR_DOOR_CLOSE_TIMES_SUM2);
+	}
+	if(at24c16_read(EE_ADDR_MQTT_SEND_TIME) == 0xFF)
+	{
+		mqtt_send_time = 30;
+	}
+	else
+	{
+		mqtt_send_time = at24c16_read(EE_ADDR_MQTT_SEND_TIME);
+	}
+	id_name[0] = at24c16_read(EE_ADDR_ID_NAME1);
+	id_name[1] = at24c16_read(EE_ADDR_ID_NAME2);
+	id_name[2] = at24c16_read(EE_ADDR_ID_NAME3);
+	id_name[3] = at24c16_read(EE_ADDR_ID_NAME4);
+	id_name_all = id_name[0] << 24 | id_name[1] << 16 | id_name[2] << 8 | id_name[3];
+	
 }
-

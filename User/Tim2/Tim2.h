@@ -3,7 +3,7 @@
 
 #include "stm32f10x.h"
  
-#define T2_MS_ARRAY_NUM  		21
+#define T2_MS_ARRAY_NUM  		22
 #define T2_COUNTER_MS_0			0
 #define T2_COUNTER_MS_1			1
 #define T2_COUNTER_MS_5			2
