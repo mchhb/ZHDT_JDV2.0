@@ -63,6 +63,7 @@ char test[300];
 extern uint8_t   pingceng;
 extern uint8_t   power;
 uint8_t tpye = 1;
+extern uint8_t mqtt_send_time;
 /**
 *@brief		TCP Client回环演示函数。
 *@param		无
@@ -135,7 +136,7 @@ void do_tcp_client(void)
 				else
 				{
 					door_close_times_mqtt = door_close_times+(door_close_times_sum*255)+(door_close_times_sum1*255*255)+(door_close_times_sum2*255*255*255);
-				 sprintf(test,"{\"id\":%d,\"type\":%d,\"s1\":%d,\"s2\":%d,\"s3\":%d,\"s4\":%d,\"s5\":%d,\"s6\":%d,\"floor\":%d,\"t\":%d,\"h\":%d,\"vx\":%d,\"vy\":%d,\"vz\":%d,\"acdt\":%d}",id_name_all,tpye,door_not_close,input4_value,pingceng,input5_printf,input6_printf,power,floor,(int)temperature,(int)humidity,(int)AccelerationX,(int)AccelerationY,(int)AccelerationZ,door_close_times_mqtt);
+				 sprintf(test,"{\"id\":%d,\"type\":%d,\"s1\":%d,\"s2\":%d,\"s3\":%d,\"s4\":%d,\"s5\":%d,\"s6\":%d,\"floor\":%d,\"t\":%d,\"h\":%d,\"vx\":%d,\"vy\":%d,\"vz\":%d,\"acdt\":%d,\"time\":%d}",id_name_all,tpye,door_not_close,input4_value,pingceng,input5_printf,input6_printf,power,floor,(int)temperature,(int)humidity,(int)AccelerationX,(int)AccelerationY,(int)AccelerationZ,door_close_times_mqtt,mqtt_send_time);
 				}
 #else
 				  for(int i=0; i<200;i++)
